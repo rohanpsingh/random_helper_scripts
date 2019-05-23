@@ -11,8 +11,11 @@ camera_matrix = np.float32([[506.7917175292969, 0.0, 312.5103261144941], [0.0, 5
 
 outDir = "out"
 labelOutDir = os.path.join(rootPath, outDir, "label")
+centerOutDir = os.path.join(rootPath, outDir, "center")
+scalesOutDir = os.path.join(rootPath, outDir, "scales")
 if not os.path.isdir(labelOutDir):    os.makedirs(labelOutDir)
-
+if not os.path.isdir(centerOutDir):   os.makedirs(centerOutDir)
+if not os.path.isdir(scalesOutDir):   os.makedirs(scalesOutDir)
 
 
 x_start, y_start, x_end, y_end = 0, 0, 0, 0
@@ -32,7 +35,7 @@ def click_and_crop(event, x, y, flags, param):
 		cropping = False
 		getROI = True
 
-def selectKeypoints(image, tot_keypts, win):
+def selectKeypoints(image, tot_keypts, win, ids):
     clone = image.copy()
     kp_count = 0
     kpts = []
@@ -41,6 +44,7 @@ def selectKeypoints(image, tot_keypts, win):
     cv2.resizeWindow(win, 3000,2000)
     cv2.setMouseCallback(win, click_and_crop)
     while True:
+            cv2.putText(image, "Mark KP: {}".format(ids[kp_count]),(5,475),cv2.FONT_HERSHEY_PLAIN,1,(0,0,0),1,cv2.LINE_AA)
             i = image.copy()
             if not cropping and not getROI:
                     cv2.imshow(win, image)
@@ -186,16 +190,20 @@ projpoints = np.asarray([
 rotations = []
 translations = []
 kpts = []
-l = [2, 58, 426, 427, 439, 455, 479, 653, 685, 700, 753]
-ids = [0, 1, 2, 3, 4, 5, 6, 7, 16, 17]
+l = [2, 58, 89, 106, 208, 283, 426, 479, 495, 653, 685, 700]
+ids = [0, 1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 15, 16, 17]
 objpoints = projpoints[ids]
 num_kpts = len(ids)
+print "Number of selected images: ", len(l)
+print "Image IDs: ", l
+print "Number of selected keypts: ", len(ids)
+print "Keypt IDs: ", ids
 
 if False:
     for i in l:
         imgName = 'img' + repr(i).zfill(4)
         img = cv2.imread(os.path.join(rootPath, imagesDir, imgName + '.jpg'))
-        kpts.append(selectKeypoints(img, num_kpts, imgName))
+        kpts.append(selectKeypoints(img, num_kpts, imgName, ids))
 
         f = open(os.path.join(rootPath, rotationDir,imgName + '.txt'), 'r')
         lines = [line.rstrip("\n") for line in f.readlines()]
@@ -217,11 +225,11 @@ if False:
     transformations[:,0:3,3] = translations
     transformations[:,3,3] = 1
     transformations = np.linalg.inv(transformations)
-    np.save("tf0.npy", transformations)
-    np.save("kp0.npy", kpt_arr)
+    np.save(os.path.join(rootPath, outDir, "tf0.npy"), transformations)
+    np.save(os.path.join(rootPath, outDir, "kp0.npy"), kpt_arr)
 else:
-    kpt_arr = np.load("kp0.npy")
-    transformations = np.load("tf0.npy")
+    kpt_arr = np.load(os.path.join(rootPath, outDir, "kp0.npy"))
+    transformations = np.load(os.path.join(rootPath, outDir, "tf0.npy"))
 
 rays = getRays(kpt_arr, transformations[:,0:3,0:3])
 points, mask = getIntersectionPoints(rays, transformations[:,0:3,3])
@@ -261,6 +269,36 @@ for i in range(1, 1001):
     tvec = tf[:3,3]
     imgpts,_ = cv2.projectPoints(projpoints, rvec, tvec, camera_matrix, None)
     imgpts = np.transpose(imgpts, (1,0,2))[0]
+
+    ymin = 1
+    if imgpts[0,1]<imgpts[1,1]:
+        ymin = 0
+    ymax = 3
+    if imgpts[2,1]>imgpts[3,1]:
+        ymax = 2
+    xmax = 1
+    if imgpts[3,0]>imgpts[1,0]:
+        xmax = 3
+    xmin = 0
+    if imgpts[2,0]<imgpts[0,0]:
+        xmin=2
+    tl = (int(imgpts[xmin,0]), int(imgpts[ymin,1]))            
+    br = (int(imgpts[xmax,0]), int(imgpts[ymax,1]))
+
+    if tl[1]<1: tl=(tl[0], 1)
+    if tl[0]<1: tl=(1, tl[1])
+    if br[1]>479: br=(br[0], 479)
+    if br[0]>639: br=(639, br[1])
+    center = (np.asarray(tl) + np.asarray(br))/2
+    w = np.asarray(br[0] - tl[0])
+    h = np.asarray(br[1] - tl[1])
+    scale = np.array([max(w,h)/200.0])
+
+    centerfile = os.path.join(centerOutDir, 'center_' + repr(i).zfill(4) + '.txt')
+    np.savetxt(centerfile, center)
+
+    scalesfile = os.path.join(scalesOutDir, 'scales_' + repr(i).zfill(4) + '.txt')
+    np.savetxt(scalesfile, scale)
     
     labelfile = os.path.join(labelOutDir, 'label_' + repr(i).zfill(4) + '.txt')
     np.savetxt(labelfile, imgpts)
@@ -270,4 +308,4 @@ for i in range(1, 1001):
         for p in range(imgpts.shape[0]):
             cv2.circle(img, tuple((int(imgpts[p,0]), int(imgpts[p,1]))), 5, (0,0,255), -1)
         cv2.imshow("win", img)
-        cv2.waitKey(200)
+        cv2.waitKey(10)
